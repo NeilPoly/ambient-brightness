@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>环境光调亮度：设置</title>
+<!--
+  板子（固件 0.2 起）的设置页：http://ambient.local/settings 。压缩在固件里（../embed_web.py）。
+  读 /api/settings，保存时把表单 POST 回去（字段名见 ../src/settings.cpp 的 settingsFromForm），保存就生效。
+  另外：Wi-Fi 情况（含配网热点的密码）、下载记录、上传新固件、重启。
+  手写的单个文件，不用构建。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #eef1f4;
+    --ink: #171a1e;
+    --muted: #58616c;
+    --faint: #9aa2ab;
+    --sheet: #fff;
+    --rule: #dde2e7;
+    --accent: #ff8a00;
+    --ok: #2c7a3a;
+    --bad: #b3261e;
+    --font-ui: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    --font-num: "DIN Alternate", "DIN Condensed", "Bahnschrift", "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 14px; line-height: 1.5; }
+  main { max-inline-size: 860px; margin-inline: auto; padding: 24px 24px 64px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header a { margin-inline-start: auto; }
+  .sheet { margin-block-start: 14px; background: var(--sheet); border: 1.5px solid var(--ink); padding: 14px 18px 16px; }
+  h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .hint { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 18px; }
+  label { display: grid; gap: 3px; color: var(--muted); font-size: 12.5px; }
+  label.check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; }
+  input, textarea, select {
+    font: inherit; color: var(--ink); background: var(--sheet);
+    border: 1.5px solid var(--rule); border-radius: 6px; padding: 6px 8px; min-block-size: 36px;
+  }
+  input[type="checkbox"] { min-block-size: 0; inline-size: 18px; block-size: 18px; accent-color: var(--ink); }
+  input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--ink); }
+  textarea { inline-size: 100%; min-block-size: 7.5em; font-family: var(--font-num); font-size: 16px; font-variant-numeric: tabular-nums; resize: vertical; }
+  .unit { display: flex; align-items: center; gap: 6px; }
+  .unit input { inline-size: 100%; font-family: var(--font-num); font-size: 16px; font-variant-numeric: tabular-nums; }
+  .unit span { color: var(--muted); white-space: nowrap; }
+  table { inline-size: 100%; border-collapse: collapse; }
+  th { text-align: start; font-weight: 400; color: var(--muted); font-size: 12.5px; padding: 0 6px 4px 0; }
+  td { padding: 3px 6px 3px 0; }
+  td input:not([type="checkbox"]) { inline-size: 100%; }
+  td.num { inline-size: 88px; }
+  td.ck { inline-size: 64px; text-align: center; }
+  button, a.btn {
+    display: inline-flex; align-items: center; min-block-size: 36px; padding: 4px 14px;
+    border: 1.5px solid var(--ink); border-radius: 6px; background: var(--sheet); color: var(--ink);
+    font: inherit; cursor: pointer; text-decoration: none;
+  }
+  button.primary { background: var(--ink); color: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .save { position: sticky; inset-block-end: 0; margin-block-start: 14px; padding: 12px 18px; background: var(--sheet); border: 1.5px solid var(--ink); }
+  #msg { color: var(--muted); }
+  #msg[data-state="ok"] { color: var(--ok); }
+  #msg[data-state="err"] { color: var(--bad); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; margin: 0 0 10px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  @media (max-width: 600px) {
+    main { padding-inline: 12px; }
+    td.num { inline-size: 64px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>设置</h1>
+    <a class="btn" href="/">回到读数</a>
+  </header>
+
+  <form id="f" novalidate>
+    <section class="sheet">
+      <h2>照度 → 亮度</h2>
+      <p class="hint">一行一个点：照度（lux）和亮度（%），照度从低到高。点和点之间按对数照度连直线，最左、最右的点以外保持不变；再限制在最低～最高之间。你手动调亮度学到的点另外叠加，不改这里。</p>
+      <div class="grid">
+        <label style="grid-column: 1 / -1">基础曲线<textarea name="points" spellcheck="false"></textarea></label>
+        <label>最低亮度<span class="unit"><input name="min" inputmode="decimal"><span>%</span></span></label>
+        <label>最高亮度<span class="unit"><input name="max" inputmode="decimal"><span>%</span></span></label>
+      </div>
+      <p class="hint" style="margin-block-start:8px">BetterDisplay 的 50% 是显示器自己的亮度 0，往下是软件压暗（画面发灰）。</p>
+    </section>
+
+    <section class="sheet">
+      <h2>调节</h2>
+      <div class="grid">
+        <label>照度平滑<span class="unit"><input name="smoothing_s" inputmode="decimal"><span>秒</span></span></label>
+        <label>差多少才开始调<span class="unit"><input name="deadband" inputmode="decimal"><span>%</span></span></label>
+        <label>每秒最多变<span class="unit"><input name="rate" inputmode="decimal"><span>%</span></span></label>
+      </div>
+    </section>
+
+    <section class="sheet">
+      <h2>三块传感器</h2>
+      <p class="hint">三路照度按权重对数加权平均，合成一个照度。先只用正面 A（和手机的光线传感器一样朝着人）。</p>
+      <div class="grid">
+        <label>A 正面<input name="wA" inputmode="decimal"></label>
+        <label>B 侧面<input name="wB" inputmode="decimal"></label>
+        <label>C 顶面<input name="wC" inputmode="decimal"></label>
+        <label>方块的摆法<select name="orientation"><option>前上右</option><option>前上左</option></select></label>
+        <label class="check" style="grid-column: 1 / -1"><input type="checkbox" name="fast">开机用快档采样（每 100 ms 一行；平时用慢档，每秒一行）</label>
+      </div>
+    </section>
+
+    <section class="sheet">
+      <h2>学你手动调的亮度</h2>
+      <p class="hint">按"差几个十倍照度"算。影响范围 0.5：差 3 倍照度时还剩 61% 的影响，差 10 倍剩 14%。替换范围 0.3 ≈ 2 倍照度以内的旧点会被新点替换。</p>
+      <div class="grid">
+        <label>影响范围<input name="sigma" inputmode="decimal"></label>
+        <label>替换范围<input name="replace" inputmode="decimal"></label>
+      </div>
+    </section>
+
+    <section class="sheet">
+      <h2>显示器</h2>
+      <p class="hint">编号是 BetterDisplay 里的 tagID（在 Mac 上打开 http://localhost:55777/get?identifiers 能看到每台的 tagID）。BetterDisplay 开着分组同步时只勾一台，另外几台靠同步跟着走（同步传的是变化量：调一台，另外几台加减同样多）。编号空着就是没有这一行。</p>
+      <table>
+        <thead><tr><th>编号</th><th>名字</th><th>偏移</th><th>调这台</th></tr></thead>
+        <tbody id="disp"></tbody>
+      </table>
+    </section>
+
+    <section class="sheet">
+      <h2>Mac 上的 BetterDisplay</h2>
+      <p class="hint">BetterDisplay 设置 → Application → Integration 里打开 HTTP 接口。地址可以写 IP，也可以写 Mac 的名字加 .local（Mac 换了 IP 也能找到）。</p>
+      <div class="grid">
+        <label style="grid-column: span 2">地址<input name="host" placeholder="比如 MacBook-Pro.local 或 192.168.1.20" spellcheck="false" autocapitalize="off"></label>
+        <label>端口<input name="port" inputmode="numeric"></label>
+        <label>token（没设就空着）<input name="token" spellcheck="false" autocapitalize="off"></label>
+        <label class="check" style="grid-column: 1 / -1"><input type="checkbox" name="sleep_ddc">显示器睡着时不调（读第一台要调的显示器的 DDC 电源状态）</label>
+        <label>时区<input name="tz" spellcheck="false" placeholder="CST-8"></label>
+      </div>
+      <p class="hint" style="margin-block-start:8px">时区用 POSIX 写法：中国 CST-8，日本 JST-9。</p>
+    </section>
+
+    <div class="save row">
+      <button type="submit" class="primary" id="save">保存</button>
+      <button type="button" id="reset">不保存，恢复成板子上的</button>
+      <span id="msg" role="status"></span>
+    </div>
+  </form>
+
+  <section class="sheet">
+    <h2>Wi-Fi</h2>
+    <dl class="kv" id="wifi"></dl>
+    <div class="row">
+      <a class="btn" href="/wifi">换一个 Wi-Fi</a>
+      <button type="button" id="forget">忘掉 Wi-Fi 并重启</button>
+    </div>
+  </section>
+
+  <section class="sheet">
+    <h2>记录</h2>
+    <p class="hint">每分钟一行：三路照度（这一分钟的平均）、合成照度、目标亮度、各台亮度（编号 b4 就是 tagID 4）、自动开没开、当时是不是先不调。最多留 7 天。事件是手动调节、自动开关、清掉学到的点。</p>
+    <dl class="kv"><dt>现在</dt><dd id="logstat">—</dd></dl>
+    <div class="row">
+      <a class="btn" href="/log.csv?hours=24">最近 24 小时</a>
+      <a class="btn" href="/log.csv">全部（7 天）</a>
+      <a class="btn" href="/events.csv">事件</a>
+    </div>
+  </section>
+
+  <section class="sheet">
+    <h2>固件</h2>
+    <dl class="kv"><dt>版本</dt><dd id="ver">—</dd><dt>开机</dt><dd id="uptime">—</dd></dl>
+    <p class="hint">在 firmware 目录 pio run 编译，上传 .pio/build/c3zero/firmware.bin。写进另一半闪存，成功了重启换过去；没成功还用原来的。设置、学到的点、记录都不会丢。</p>
+    <div class="row">
+      <input type="file" id="fw" accept=".bin">
+      <button type="button" id="upload" disabled>上传并升级</button>
+      <button type="button" id="reboot">重启板子</button>
+      <span id="upmsg" role="status"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const f = $('f');
+const PCT = ['min', 'max', 'deadband', 'rate'];   // 板子上存的是 0～1，页面上用 %
+
+function say(el, text, state) { el.textContent = text; el.dataset.state = state || ''; }
+const num = (v, d = 4) => +(+v).toFixed(d);
+
+function fill(s) {
+  f.points.value = s.points.map(([x, b]) => `${num(x)} ${num(b * 100, 1)}`).join('\n');
+  f.min.value = num(s.min * 100, 1);
+  f.max.value = num(s.max * 100, 1);
+  f.smoothing_s.value = num(s.smoothing_s, 2);
+  f.deadband.value = num(s.deadband * 100, 2);
+  f.rate.value = num(s.rate_per_s * 100, 2);
+  f.wA.value = s.weights.A; f.wB.value = s.weights.B; f.wC.value = s.weights.C;
+  f.orientation.value = s.orientation;
+  f.fast.checked = s.fast;
+  f.sigma.value = s.sigma; f.replace.value = s.replace;
+  f.host.value = s.host; f.port.value = s.port; f.token.value = s.token;
+  f.sleep_ddc.checked = s.sleep_ddc;
+  f.tz.value = s.tz;
+  const rows = [];
+  for (let i = 0; i < 4; i++) {
+    const d = s.displays[i] || { tag: '', name: '', offset: 0, enabled: false };
+    rows.push(`<tr><td class="num"><input name="d${i}_tag" inputmode="numeric" value="${d.tag}" aria-label="第 ${i + 1} 台的编号"></td>`
+      + `<td><input name="d${i}_name" value="${String(d.name).replace(/"/g, '&quot;')}" aria-label="第 ${i + 1} 台的名字"></td>`
+      + `<td class="num"><span class="unit"><input name="d${i}_offset" inputmode="decimal" value="${num(d.offset * 100, 1)}" aria-label="第 ${i + 1} 台的偏移"><span>%</span></span></td>`
+      + `<td class="ck"><input type="checkbox" name="d${i}_en" ${d.enabled ? 'checked' : ''} aria-label="调第 ${i + 1} 台"></td></tr>`);
+  }
+  $('disp').innerHTML = rows.join('');
+}
+
+function load() {
+  return fetch('/api/settings').then((r) => r.json()).then(fill).catch(() => say($('msg'), '读不到板子上的设置', 'err'));
+}
+
+f.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const body = new URLSearchParams();
+  for (const el of f.elements) {
+    if (!el.name) continue;
+    body.set(el.name, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value);
+  }
+  $('save').disabled = true;
+  say($('msg'), '保存中…');
+  fetch('/api/settings', { method: 'POST', body }).then(async (r) => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || '保存失败');
+    say($('msg'), '已保存，已经生效', 'ok');
+    return load();
+  }).catch((err) => say($('msg'), err.message, 'err')).finally(() => { $('save').disabled = false; });
+});
+$('reset').addEventListener('click', () => { load(); say($('msg'), '恢复成板子上的设置了'); });
+
+function info() {
+  fetch('/api/info').then((r) => r.json()).then((s) => {
+    $('ver').textContent = s.version;
+    const up = s.uptime;
+    $('uptime').textContent = up < 3600 ? `${Math.round(up / 60)} 分钟前` : up < 86400 ? `${(up / 3600).toFixed(1)} 小时前` : `${(up / 86400).toFixed(1)} 天前`;
+    $('logstat').textContent = s.log;
+    const w = s.wifi;
+    $('wifi').innerHTML = `<dt>网络</dt><dd>${w.ssid || '—'}${w.connected ? '' : '（没连上）'}</dd>`
+      + `<dt>信号</dt><dd>${w.rssi == null ? '—' : w.rssi + ' dBm' + (w.rssi > -60 ? '（好）' : w.rssi > -72 ? '（还行）' : '（弱）')}</dd>`
+      + `<dt>地址</dt><dd>${w.ip || '—'}，也可以用 ambient.local</dd>`
+      + (w.ap ? `<dt>热点</dt><dd>开着：${w.ap}</dd>` : '')
+      + (s.ap_pass ? `<dt>配网热点密码</dt><dd>${s.ap_pass}（连不上 Wi-Fi 超过 10 分钟才开热点）</dd>` : '');
+  }).catch(() => {});
+}
+
+$('forget').addEventListener('click', () => {
+  if (!confirm('忘掉存的 Wi-Fi 并重启？重启后板子会开热点 Ambient-xxxx（不要密码），要用手机连上它重新配。')) return;
+  fetch('/api/reboot?forget=1', { method: 'POST' }).then(() => say($('upmsg'), '重启了，去连热点 Ambient-xxxx（不要密码）'));
+});
+$('reboot').addEventListener('click', () => {
+  if (!confirm('重启板子？大约 10 秒后回来。')) return;
+  fetch('/api/reboot', { method: 'POST' }).then(() => waitBack('重启中…'));
+});
+
+$('fw').addEventListener('change', () => { $('upload').disabled = !$('fw').files.length; });
+$('upload').addEventListener('click', () => {
+  const file = $('fw').files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('firmware', file, file.name);
+  const xhr = new XMLHttpRequest();
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) say($('upmsg'), `上传 ${Math.round(e.loaded / e.total * 100)}%`); };
+  xhr.onload = () => {
+    if (xhr.status === 200) waitBack('升级成功，重启中…');
+    else say($('upmsg'), '升级没成功：' + ((() => { try { return JSON.parse(xhr.responseText).error; } catch { return xhr.status; } })()), 'err');
+  };
+  xhr.onerror = () => say($('upmsg'), '上传断了', 'err');
+  $('upload').disabled = true;
+  xhr.open('POST', '/update');
+  xhr.send(fd);
+});
+
+// 重启以后等板子回来，回来了刷新版本号
+function waitBack(text) {
+  say($('upmsg'), text);
+  const t0 = Date.now();
+  const poll = () => fetch('/api/info', { cache: 'no-store' }).then((r) => r.json()).then(() => {
+    say($('upmsg'), '板子回来了', 'ok');
+    info();
+  }).catch(() => { if (Date.now() - t0 < 60000) setTimeout(poll, 2000); else say($('upmsg'), '一分钟了还没回来：看看板子的电源和 Wi-Fi', 'err'); });
+  setTimeout(poll, 4000);
+}
+
+load();
+info();
+setInterval(info, 15000);
+</script>
+</body>
+</html>

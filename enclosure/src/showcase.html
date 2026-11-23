@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ambient-brightness 3D</title>
+<meta name="robots" content="noindex">
+<style>
+  /* 展示版：嵌在个人网站的项目页里（iframe）。只有三维画面和一个"拆开"键，没有说明文字。
+     语言从地址 # 后面的 lang=zh|en|ja 取。 */
+  html, body { height: 100%; margin: 0; }
+  body {
+    overflow: hidden;
+    background: linear-gradient(#eef1f4, #d3d9e0);
+    font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Hiragino Sans", sans-serif;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    inline-size: 100%;
+    block-size: 100%;
+    touch-action: pan-y;      /* 手机上横着拖转模型，竖着划照样滚网页 */
+    cursor: grab;
+  }
+  #stage:active { cursor: grabbing; }
+  #labels { display: none; }
+  #toolbar { position: fixed; inset-block-end: 14px; inset-inline-end: 14px; }
+  #toolbar button {
+    min-block-size: 40px;
+    padding: 0 16px;
+    border: 3px solid #000;
+    border-radius: 8px;
+    background: #fff;
+    color: #000;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 3px 3px 0 #000;
+    cursor: pointer;
+    transition: transform 90ms ease-out, box-shadow 90ms ease-out;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #toolbar button[aria-pressed="true"] { background: #f25c05; transform: translate(3px, 3px); box-shadow: 0 0 0 #000; }
+  #toolbar button:focus-visible { outline: 3px solid #f25c05; outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { #toolbar button { transition: none; } }
+  /* 出错（多半是浏览器开不了 WebGL）：技术细节不给访客看，换成一句话，"拆开"键也藏起来 */
+  #error { display: none; }
+  .fallback { display: none; position: fixed; inset: 0; margin: 0; place-items: center; padding: 24px; color: #45474a; font-size: 15px; font-weight: 600; text-align: center; }
+  #error:not(:empty) ~ .fallback { display: grid; }
+  :lang(ja) .fallback { word-break: auto-phrase; }
+  body:has(#error:not(:empty)) #toolbar { display: none; }
+</style>
+</head>
+<body data-mode="showcase">
+<canvas id="stage"></canvas>
+<div id="labels" aria-hidden="true"></div>
+<div id="toolbar" role="toolbar">
+  <button type="button" id="explode" data-toggle="explode" aria-pressed="false"></button>
+</div>
+<div id="error"></div>
+<p class="fallback" id="fallback" role="alert"></p>
+<script>
+  (function () {
+    var T = {
+      zh: { html: 'zh-CN', explode: '拆开', stage: '外壳的三维模型，可以拖动旋转', fail: '这个浏览器显示不了 3D 模型。' },
+      en: { html: 'en', explode: 'Take apart', stage: '3D model of the enclosure, drag to rotate', fail: 'This browser can’t show the 3D model.' },
+      ja: { html: 'ja', explode: '分解', stage: 'ケースの 3D モデル。ドラッグで回転', fail: 'このブラウザでは 3D モデルを表示できません。' }
+    };
+    var lang = new URLSearchParams(location.hash.slice(1)).get('lang');
+    var t = T[lang] || T.zh;
+    document.documentElement.lang = t.html;
+    document.getElementById('explode').textContent = t.explode;
+    document.getElementById('stage').setAttribute('aria-label', t.stage);
+    document.getElementById('fallback').textContent = t.fail;
+  })();
+</script>
+<script type="module">/*__BUNDLE__*/</script>
+</body>
+</html>

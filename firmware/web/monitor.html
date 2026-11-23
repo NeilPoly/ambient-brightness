@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>环境光读数</title>
+<!--
+  实时看三块传感器的读数，两种用法：
+  1. 打开 http://ambient.local ：这个页面压缩在固件里（../embed_web.py），每秒向板子拉一次状态（/api/state?since=），
+     显示三台显示器的亮度、照度 → 亮度的曲线、你手动调过的点，可以开关自动调节；右上角有"设置"和"下载记录"。
+  2. 直接双击打开这个文件：网页自己读板子的 USB 串口（Chrome 的 Web Serial），只看读数，排查问题用。
+  板子程序见 ..：每行 "lux A=.. B=.. C=.."，"-" 表示这一行没读到；以 # 开头的是说明行。
+  往板子发 f / n 换快档（100 ms 一行）/ 慢档（1 秒一行），发 i 回每块板的情况。
+  手写的单个文件，不用构建。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #eef1f4;
+    --ink: #171a1e;
+    --muted: #58616c;
+    --faint: #9aa2ab;
+    --sheet: #fff;
+    --rule: #dde2e7;
+    --grid: #e6e9ed;
+    --accent: #ff8a00;
+    --ok: #2c7a3a;
+    --bad: #b3261e;
+    --a: #ff8a00;
+    --b: #2f9e44;
+    --c: #1c7ed6;
+    --font-ui: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    --font-num: "DIN Alternate", "DIN Condensed", "Bahnschrift", "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  main { max-inline-size: 1100px; margin-inline: auto; padding: 24px 24px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  #status { color: var(--muted); }
+  #status[data-state="on"] { color: var(--ok); }
+  #status[data-state="err"] { color: var(--bad); }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; margin-inline-start: auto; }
+  button {
+    min-block-size: 36px;
+    padding: 4px 14px;
+    border: 1.5px solid var(--ink);
+    border-radius: 6px;
+    background: var(--sheet);
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary { background: var(--ink); color: #fff; }
+  a.btn {
+    display: inline-flex; align-items: center; min-block-size: 36px; padding: 4px 14px;
+    border: 1.5px solid var(--ink); border-radius: 6px; background: var(--sheet); color: var(--ink); text-decoration: none;
+  }
+  a.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seg { display: inline-flex; }
+  .seg button { border-radius: 0; }
+  .seg button + button { border-inline-start-width: 0; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .sheet { margin-block-start: 14px; background: var(--sheet); border: 1.5px solid var(--ink); }
+
+  .readouts { display: grid; grid-template-columns: repeat(3, 1fr); margin-block-start: 18px; }
+  .ch { padding: 12px 16px 14px; border-inline-start: 1px solid var(--rule); }
+  .ch:first-child { border-inline-start: 0; }
+  .ch h2 { margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .ch h2 i { inline-size: 18px; block-size: 4px; border-radius: 2px; background: var(--c-color); }
+  .ch h2 small { color: var(--muted); font-weight: 400; }
+  .val { font-family: var(--font-num); font-size: 46px; line-height: 1.1; font-variant-numeric: tabular-nums; margin-block-start: 6px; }
+  .val small { font-size: 16px; color: var(--muted); margin-inline-start: 4px; }
+  .val.missing { color: var(--faint); }
+  .range { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+  /* 亮度（从板子上打开时才有；双击打开、直接读串口时没有） */
+  .bright { display: grid; grid-template-columns: 300px 1fr; }
+  .bright-side { padding: 12px 16px 14px; border-inline-end: 1px solid var(--rule); }
+  .bright-side h2, .bright-curve h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: baseline; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--font-num); font-size: 22px; font-variant-numeric: tabular-nums; }
+  .kv dd small { font-size: 13px; color: var(--muted); margin-inline-start: 3px; font-family: var(--font-ui); }
+  .disp { margin-block-start: 12px; }
+  .disp-row { display: grid; grid-template-columns: 76px 1fr 44px; align-items: center; gap: 8px; padding-block: 3px; }
+  .disp-row span:first-child { color: var(--muted); }
+  .disp-row b { font-family: var(--font-num); font-weight: 400; font-size: 16px; text-align: end; font-variant-numeric: tabular-nums; }
+  .bar { position: relative; block-size: 10px; background: var(--grid); border-radius: 5px; overflow: hidden; }
+  .bar i { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--ink); border-radius: 5px; }
+  .bar u { position: absolute; inset-block: -2px; inline-size: 2px; background: var(--accent); }
+  .auto { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block-start: 14px; }
+  #learned-n { color: var(--muted); font-size: 12.5px; }
+  .bright-curve { padding: 12px 16px 8px; }
+  .bright-curve p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  #curve { block-size: 260px; }
+
+  .chart-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 14px; border-block-end: 1px solid var(--rule); }
+  .chart-head span { color: var(--muted); }
+  #rate { margin-inline-start: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  canvas { display: block; inline-size: 100%; }
+  #plot { block-size: 340px; }
+
+  #log {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    min-block-size: 3em;
+    max-block-size: 12em;
+    overflow: auto;
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    font: 12px/1.6 ui-monospace, Menlo, monospace;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+  #nosupport { margin-block-start: 16px; padding: 12px 14px; border: 1.5px solid var(--bad); color: var(--bad); background: #fff; }
+
+  @media (max-width: 860px) {
+    main { padding-inline: 12px; }
+    .readouts, .bright { grid-template-columns: 1fr; }
+    .ch { border-inline-start: 0; border-block-start: 1px solid var(--rule); }
+    .ch:first-child { border-block-start: 0; }
+    .bright-side { border-inline-end: 0; border-block-end: 1px solid var(--rule); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>环境光读数</h1>
+    <span id="status" role="status">未连接</span>
+    <div class="tools">
+      <button type="button" id="connect" class="primary">连接板子</button>
+      <div class="seg" role="group" aria-label="采样速度">
+        <button type="button" data-mode="f" aria-pressed="true" disabled>快 100 ms</button>
+        <button type="button" data-mode="n" aria-pressed="false" disabled>慢 1 秒</button>
+      </div>
+      <button type="button" id="info" disabled>查板子情况</button>
+      <a class="btn" id="go-settings" href="/settings" hidden>设置</a>
+      <a class="btn" id="go-log" href="/log.csv?hours=24" hidden title="最近 24 小时，每分钟一行；全部 7 天在设置页下载">下载记录</a>
+    </div>
+  </header>
+  <div id="nosupport" hidden>这个浏览器不能直接读串口，请用 Chrome 打开这个文件。</div>
+
+  <section class="sheet readouts" aria-label="当前读数">
+    <div class="ch" style="--c-color: var(--a)"><h2><i></i>A 正面<small>橙圈那面</small></h2><div class="val missing" id="v-a">—</div><div class="range" id="r-a">&nbsp;</div></div>
+    <div class="ch" style="--c-color: var(--b)"><h2><i></i>B 右面<small id="o-b">前上右摆法</small></h2><div class="val missing" id="v-b">—</div><div class="range" id="r-b">&nbsp;</div></div>
+    <div class="ch" style="--c-color: var(--c)"><h2><i></i>C 顶面<small id="o-c">前上右摆法</small></h2><div class="val missing" id="v-c">—</div><div class="range" id="r-c">&nbsp;</div></div>
+  </section>
+
+  <section class="sheet bright" id="bright" aria-label="显示器亮度" hidden>
+    <div class="bright-side">
+      <h2>显示器亮度</h2>
+      <dl class="kv">
+        <dt>合成照度</dt><dd id="lux">—</dd>
+        <dt>目标亮度</dt><dd id="target">—</dd>
+      </dl>
+      <div class="disp" id="disp"></div>
+      <div class="auto">
+        <button type="button" id="auto" aria-pressed="false">自动调节：关</button>
+        <button type="button" id="clear">清掉学到的点</button>
+        <span id="learned-n"></span>
+      </div>
+    </div>
+    <div class="bright-curve">
+      <h2>照度 → 亮度<small style="font-weight:400;color:var(--muted)">（横轴照度 lux，按对数画）</small></h2>
+      <canvas id="curve" aria-label="照度到亮度的曲线，以及当前位置和手动调过的点"></canvas>
+      <p>黑线是实际在用的曲线；灰虚线是基础曲线（在设置页里定，小圆点是设定的点）。橙色圆环是学到的点：你手动调亮度时的照度和亮度，黑线会弯过去经过它们。灰圈是记录里所有手动调过的地方，橙点是现在的位置。</p>
+    </div>
+  </section>
+
+  <section class="sheet" aria-label="读数曲线">
+    <div class="chart-head">
+      <span>最近</span>
+      <div class="seg" role="group" aria-label="曲线时长">
+        <button type="button" data-span="30" aria-pressed="true">30 秒</button>
+        <button type="button" data-span="120" aria-pressed="false">2 分钟</button>
+        <button type="button" data-span="600" aria-pressed="false">10 分钟</button>
+      </div>
+      <span>纵轴按对数画（照度从 0.01 到几万 lux）</span>
+      <span id="rate"></span>
+    </div>
+    <canvas id="plot" aria-label="三路照度随时间的曲线"></canvas>
+  </section>
+
+  <pre id="log" aria-label="板子发来的说明"></pre>
+</main>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const CH = ['a', 'b', 'c'];
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COLOR = { a: css('--a'), b: css('--b'), c: css('--c') };
+const KEEP_S = 600;           // 最多留 10 分钟的数
+const data = [];              // { t: 秒（墙上时间）, a, b, c }，读不到是 null
+const SERVER = location.protocol.startsWith('http');   // 是不是从板子上打开的（双击打开的是 file:）
+let span = 30;
+let st = null;                // 板子发来的状态
+let manual = [];              // 记录里所有手动调过的点
+let learnedKey = '';
+let dirty = true, curveDirty = true;
+
+function setStatus(text, state) {
+  $('status').textContent = text;
+  $('status').dataset.state = state || '';
+}
+function enableControls(on) {
+  document.querySelectorAll('[data-mode], #info').forEach((b) => { b.disabled = !on; });
+}
+function log(line) {
+  const el = $('log');
+  el.textContent += line + '\n';
+  el.scrollTop = el.scrollHeight;
+  // 板子回报的档位，按钮跟着它显示
+  const m = line.match(/^# 模式 (快|慢)/);
+  if (m) document.querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.mode === 'f') === (m[1] === '快'))));
+}
+const now = () => Date.now() / 1000;
+
+// ---------- 数据 ----------
+function addSample(t, v) {
+  data.push({ t, a: v.a ?? null, b: v.b ?? null, c: v.c ?? null });
+  while (data.length && t - data[0].t > KEEP_S) data.shift();
+  dirty = true;
+}
+function handleLine(line) {
+  if (!line) return;
+  if (line.startsWith('#')) return log(line);
+  if (!line.startsWith('lux')) return;
+  const v = {};
+  for (const ch of CH) {
+    const m = line.match(new RegExp(ch.toUpperCase() + '=([0-9.]+|-)'));
+    v[ch] = m && m[1] !== '-' ? +m[1] : null;
+  }
+  addSample(now(), v);
+}
+
+// ---------- 用法 1：板子上的网页 ----------
+let send;
+if (SERVER) {
+  $('connect').hidden = true;
+  $('bright').hidden = false;
+  const post = (url) => fetch(url, { method: 'POST' }).catch(() => {});
+  send = (c) => post('/api/cmd?c=' + c);
+  enableControls(true);
+
+  const loadManual = () => fetch('/api/manual').then((r) => r.json()).then((m) => { manual = m; curveDirty = true; }).catch(() => {});
+  loadManual();
+  setInterval(loadManual, 30000);
+
+  fetch('/api/history').then((r) => r.json()).then((h) => {
+    for (const s of h) addSample(s.t, { a: s.A, b: s.B, c: s.C });
+  }).catch(() => {}).finally(() => fetch('/api/state').then((r) => r.json()).then((s) => {
+    (s.msgs || []).forEach(log);
+    render(s);
+    startPolling(s);
+  }));
+
+  // 板子：没有推送，每秒拉一次（带上已经有的最后一行读数的时间、最后一条说明的编号，只拿新的）
+  function startPolling(s0) {
+    document.title = '环境光调亮度';
+    document.querySelector('h1').textContent = '环境光调亮度';
+    $('go-settings').hidden = $('go-log').hidden = false;
+    let mseq = s0.mseq || 0;
+    const tick = () => {
+      const since = data.length ? data[data.length - 1].t : 0;
+      fetch(`/api/state?since=${since}&m=${mseq}`).then((r) => r.json()).then((s) => {
+        for (const p of s.samples || []) addSample(p.t, { a: p.A, b: p.B, c: p.C });
+        (s.msgs || []).forEach(log);
+        mseq = s.mseq ?? mseq;
+        render(s);
+      }).catch(() => setStatus('连不上板子，正在重试…', 'err')).finally(() => setTimeout(tick, 1000));
+    };
+    setTimeout(tick, 1000);
+  }
+
+  $('auto').addEventListener('click', () => post('/api/auto?on=' + ($('auto').getAttribute('aria-pressed') === 'true' ? 0 : 1)));
+  $('clear').addEventListener('click', () => {
+    if (confirm('清掉所有学到的点？曲线回到基础曲线。记录里的手动调节不受影响。')) post('/api/learned/clear');
+  });
+}
+
+const pct = (v) => v == null ? '—' : Math.round(v * 100) + '<small>%</small>';
+let lastManualCount = -1;
+function render(s) {
+  st = s;
+  setStatus(s.status_text, s.status_ok ? 'on' : 'err');   // 板子自己写好的一句话
+  if (s.fast != null) document.querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.mode === 'f') === s.fast)));
+  const left = s.orientation === '前上左';
+  $('o-b').textContent = left ? '前上左：朝上' : '前上右：朝右';
+  $('o-c').textContent = left ? '前上左：朝左' : '前上右：朝上';
+  $('lux').innerHTML = s.lux == null ? '—' : fmt(s.lux) + '<small>lux</small>';
+  $('target').innerHTML = pct(s.target);
+  $('disp').innerHTML = s.displays.map((d) => {
+    const want = s.target == null ? null : Math.min(s.control.max, Math.max(s.control.min, s.target + (+d.offset || 0)));
+    const b = d.brightness;
+    return `<div class="disp-row"><span>${d.name}${d.enabled ? '' : '（不调）'}</span>`
+      + `<div class="bar"><i style="inline-size:${b == null ? 0 : b * 100}%"></i>${want == null || !d.enabled ? '' : `<u style="inset-inline-start:calc(${want * 100}% - 1px)"></u>`}</div>`
+      + `<b>${b == null ? '—' : Math.round(b * 100) + '%'}</b></div>`;
+  }).join('');
+  $('auto').setAttribute('aria-pressed', String(s.auto));
+  $('auto').textContent = '自动调节：' + (s.auto ? '开' : '关') + (s.auto && s.hold ? `（${s.hold}，先不调）` : '');
+  const n = (s.learned || []).length;
+  $('learned-n').textContent = n ? `学到 ${n} 个点` : '还没有学到的点';
+  $('clear').disabled = !n;
+  // 学到的点变了（你刚手动调过）：顺便刷新记录里的手动调节
+  const key = JSON.stringify(s.learned || []);
+  if (key !== learnedKey) { learnedKey = key; fetch('/api/manual').then((r) => r.json()).then((m) => { manual = m; curveDirty = true; }).catch(() => {}); }
+  curveDirty = true;
+}
+
+// ---------- 用法 2：网页自己读串口 ----------
+let port = null, writer = null;
+if (!SERVER) {
+  $('connect').addEventListener('click', async () => {
+    if (port) return closeSerial();
+    try {
+      const p = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] });   // 0x303a 是乐鑫
+      openSerial(p);
+    } catch { /* 没选 */ }
+  });
+  send = async (ch) => { if (writer) await writer.write(new TextEncoder().encode(ch)); };
+  if (!('serial' in navigator)) {
+    $('nosupport').hidden = false;
+    $('connect').disabled = true;
+  } else {
+    navigator.serial.addEventListener('disconnect', (e) => {
+      if (e.target === port) { port = null; writer = null; enableControls(false); $('connect').textContent = '连接板子'; setStatus('板子拔掉了', 'err'); }
+    });
+    navigator.serial.addEventListener('connect', (e) => { if (!port) openSerial(e.target); });   // 插回来自动连
+    navigator.serial.getPorts().then((ps) => { if (ps.length && !port) openSerial(ps[0]); });   // 选过的板子自动连
+  }
+}
+
+async function openSerial(p) {
+  try {
+    await p.open({ baudRate: 115200 });
+  } catch (e) {
+    setStatus('打不开串口：' + e.message + '（是不是有别的程序占着串口？）', 'err');
+    return;
+  }
+  port = p;
+  writer = port.writable.getWriter();
+  setStatus('已连接', 'on');
+  enableControls(true);
+  $('connect').textContent = '断开';
+  send(document.querySelector('[data-mode][aria-pressed="true"]').dataset.mode);   // 让板子换到页面上选的档
+  const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let k;
+      while ((k = buf.indexOf('\n')) >= 0) {
+        handleLine(buf.slice(0, k).trim());
+        buf = buf.slice(k + 1);
+      }
+    }
+  } catch (e) {
+    setStatus('断开了：' + e.message, 'err');
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function closeSerial() {
+  const p = port;
+  port = null;
+  enableControls(false);
+  $('connect').textContent = '连接板子';
+  setStatus('未连接');
+  try { writer.releaseLock(); } catch {}
+  writer = null;
+  try { await p.readable.cancel(); } catch {}
+  try { await p.close(); } catch {}
+}
+
+// ---------- 按钮 ----------
+document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  send(b.dataset.mode);
+}));
+$('info').addEventListener('click', () => send('i'));
+document.querySelectorAll('[data-span]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-span]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  span = +b.dataset.span;
+  dirty = true;
+}));
+
+// ---------- 读数 ----------
+const fmt = (v) => v == null ? '—' : v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v).toLocaleString('zh-CN');
+
+function updateReadouts() {
+  const last = data[data.length - 1];
+  if (!last) return;
+  const t1 = last.t;
+  const win = data.filter((p) => t1 - p.t <= span);
+  for (const ch of CH) {
+    // 偶尔缺一行不要闪：1.5 秒内有读数就显示最近那个
+    let v = null;
+    for (let k = data.length - 1; k >= 0 && t1 - data[k].t <= 1.5; k--) {
+      if (data[k][ch] != null) { v = data[k][ch]; break; }
+    }
+    const el = $('v-' + ch);
+    el.innerHTML = v == null ? '—' : `${fmt(v)}<small>lux</small>`;
+    el.classList.toggle('missing', v == null);
+    const vs = win.map((p) => p[ch]).filter((x) => x != null);
+    $('r-' + ch).textContent = vs.length ? `最近 ${span >= 60 ? span / 60 + ' 分钟' : span + ' 秒'}：${fmt(Math.min(...vs))} ～ ${fmt(Math.max(...vs))}` : ' ';
+  }
+  const n = data.filter((p) => t1 - p.t <= 3).length;
+  $('rate').textContent = `每秒 ${(n / 3).toFixed(1)} 行`;
+}
+
+function sizeCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  return [ctx, W, H];
+}
+const luxLabel = (v) => v >= 1 ? v.toLocaleString('zh-CN') : String(v);
+
+// 读数随时间：纵轴对数
+function drawPlot() {
+  const [ctx, W, H] = sizeCanvas($('plot'));
+  const L = 56, R = 14, T = 12, B = 26, pw = W - L - R, ph = H - T - B;
+  const t1 = data.length ? data[data.length - 1].t : now();
+  const win = data.filter((p) => t1 - p.t <= span);
+  const vs = win.flatMap((p) => CH.map((c) => p[c])).filter((v) => v != null && v > 0);
+  let lo = vs.length ? Math.floor(Math.log10(Math.max(Math.min(...vs), 0.01))) : -1;
+  let hi = vs.length ? Math.ceil(Math.log10(Math.max(...vs))) : 2;
+  if (hi - lo < 2) { lo = Math.floor((lo + hi) / 2 - 1); hi = lo + 2; }
+  const X = (t) => L + pw * (1 - (t1 - t) / span);
+  const Y = (v) => T + ph * (1 - (Math.log10(Math.max(v, 0.01)) - lo) / (hi - lo));
+
+  ctx.font = `12px ${css('--font-num')}`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let e = lo; e <= hi; e++) {
+    for (const m of [1, 2, 5]) {
+      const v = m * 10 ** e;
+      if (Math.log10(v) > hi + 1e-9) continue;
+      const y = Y(v);
+      ctx.strokeStyle = m === 1 ? '#cfd4d9' : css('--grid');
+      ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
+      if (m === 1) { ctx.fillStyle = css('--muted'); ctx.fillText(luxLabel(v), L - 6, y); }
+    }
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const step = span <= 30 ? 5 : span <= 120 ? 20 : 60;
+  for (let s = 0; s <= span; s += step) {
+    ctx.fillStyle = css('--muted');
+    ctx.fillText(s === 0 ? '现在' : (s >= 60 ? s / 60 + ' 分' : s + ' 秒'), L + pw * (1 - s / span), T + ph + 6);
+  }
+  ctx.strokeStyle = css('--ink');
+  ctx.strokeRect(L, T, pw, ph);
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  for (const ch of CH) {
+    ctx.strokeStyle = COLOR[ch];
+    ctx.beginPath();
+    let pen = false;
+    for (const p of win) {
+      if (p[ch] == null) { pen = false; continue; }
+      const x = X(p.t), y = Y(p[ch]);
+      if (pen) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      pen = true;
+    }
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1;
+}
+
+// 照度 → 亮度：横轴对数照度，纵轴亮度
+function drawCurve() {
+  if (!st) return;
+  const [ctx, W, H] = sizeCanvas($('curve'));
+  const L = 44, R = 12, T = 10, B = 26, pw = W - L - R, ph = H - T - B;
+  const pts = st.curve;
+  const learned = st.learned || [];
+  const xs = [...pts.map((p) => p[0]), ...manual.map((m) => m.lux), ...learned.map((p) => p.lux), st.lux].filter((v) => v > 0);
+  const lo = Math.floor(Math.log10(Math.min(...xs, 0.1)));
+  const hi = Math.ceil(Math.log10(Math.max(...xs, 1000)));
+  const X = (v) => L + pw * (Math.log10(Math.max(v, 10 ** lo)) - lo) / (hi - lo);
+  const Y = (b) => T + ph * (1 - b);
+
+  ctx.font = `12px ${css('--font-num')}`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let b = 0; b <= 1.001; b += 0.2) {
+    ctx.strokeStyle = css('--grid');
+    ctx.beginPath(); ctx.moveTo(L, Y(b)); ctx.lineTo(L + pw, Y(b)); ctx.stroke();
+    ctx.fillStyle = css('--muted');
+    ctx.fillText(Math.round(b * 100) + '%', L - 6, Y(b));
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let e = lo; e <= hi; e++) {
+    ctx.strokeStyle = '#cfd4d9';
+    ctx.beginPath(); ctx.moveTo(X(10 ** e), T); ctx.lineTo(X(10 ** e), T + ph); ctx.stroke();
+    ctx.fillStyle = css('--muted');
+    ctx.fillText(luxLabel(10 ** e), X(10 ** e), T + ph + 6);
+  }
+  ctx.strokeStyle = css('--ink');
+  ctx.strokeRect(L, T, pw, ph);
+
+  // 最低、最高
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = css('--faint');
+  for (const b of [st.control.min, st.control.max]) { ctx.beginPath(); ctx.moveTo(L, Y(b)); ctx.lineTo(L + pw, Y(b)); ctx.stroke(); }
+  ctx.setLineDash([]);
+
+  // 手动调过的点
+  ctx.strokeStyle = css('--muted');
+  ctx.lineWidth = 1.5;
+  for (const m of manual) { ctx.beginPath(); ctx.arc(X(m.lux), Y(m.b), 4.5, 0, Math.PI * 2); ctx.stroke(); }
+
+  // 基础曲线（设置页里定的）：灰虚线，两头水平延伸
+  ctx.strokeStyle = css('--faint');
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.moveTo(L, Y(pts[0][1]));
+  for (const [x, y] of pts) ctx.lineTo(X(x), Y(y));
+  ctx.lineTo(L + pw, Y(pts[pts.length - 1][1]));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = css('--faint');
+  for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(X(x), Y(y), 2.5, 0, Math.PI * 2); ctx.fill(); }
+
+  // 实际在用的曲线（基础曲线 + 学到的点）：黑线
+  const eff = (st.effective || []).filter(([x]) => x >= 10 ** lo && x <= 10 ** hi);
+  ctx.strokeStyle = css('--ink');
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  eff.forEach(([x, y], i) => { if (i) ctx.lineTo(X(x), Y(y)); else ctx.moveTo(X(x), Y(y)); });
+  ctx.stroke();
+
+  // 学到的点：橙色圆环
+  ctx.strokeStyle = css('--accent');
+  ctx.lineWidth = 2.5;
+  for (const p of learned) { ctx.beginPath(); ctx.arc(X(p.lux), Y(p.b), 6, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.lineWidth = 1;
+
+  // 现在的位置
+  if (st.lux != null && st.target != null) {
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = css('--accent');
+    ctx.beginPath(); ctx.moveTo(X(st.lux), T); ctx.lineTo(X(st.lux), T + ph); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = css('--accent');
+    ctx.beginPath(); ctx.arc(X(st.lux), Y(st.target), 6, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function frame() {
+  if (dirty) { updateReadouts(); drawPlot(); dirty = false; }
+  if (curveDirty && SERVER) { drawCurve(); curveDirty = false; }
+  requestAnimationFrame(frame);
+}
+new ResizeObserver(() => { dirty = true; curveDirty = true; }).observe(document.body);
+requestAnimationFrame(frame);
+
+// 地址后面加 #demo：不连板子，造一些假数据，用来检查页面
+if (location.hash === '#demo') {
+  let k = 0;
+  setInterval(() => {
+    k++;
+    const cover = (k % 120) < 30;   // 每 12 秒里有 3 秒像被手盖住
+    const a = (cover ? 0.05 : 6.4) * (1 + 0.02 * Math.sin(k / 7));
+    handleLine(`lux A=${a.toFixed(2)} B=${(4.9 + 0.1 * Math.sin(k / 11)).toFixed(2)} C=${k % 50 === 0 ? '-' : (54 + Math.sin(k / 5)).toFixed(2)}`);
+  }, 100);
+  log('# 演示数据，不是板子的');
+}
+</script>
+</body>
+</html>

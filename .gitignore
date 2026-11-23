@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+# PlatformIO 编译产物、本机专用设置
+firmware/.pio/
+firmware/platformio.local.ini
+firmware/src/web_assets.h
+# 外壳预览页（node build.mjs 生成）
+enclosure/out/

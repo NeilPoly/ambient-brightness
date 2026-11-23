@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>环境光传感器接线图</title>
+<!--
+  三块 OPT3001 小板和 ESP32-C3-Zero 之间怎么焊线。
+  接法和预览里一致（ambient-brightness/enclosure/src/main.js 的 makeWires）：
+  三块共用 GND、3V3、SCL=GPIO4，SDA 各一根：A（正面）GPIO5、B（右面）GPIO6、C（顶面）GPIO7，INT 不接。
+  共用的三根按"主板 → A → C → B"串着走：主板每个焊盘只焊一根线，A、C 上的 GND、VCC、SCL 每个孔两根线（一进一出）。
+  主板引脚排列按微雪官方引脚图（USB 朝上看元件面：左排 5V、GND、3V3、GP0～GP5，右排 GP21、GP20、GP19、GP18、GP10、GP9、GP8、GP7、GP6）。
+  传感器板 5 个焊盘：离 GND 长边 2.1 起每隔 2.54，离板尾 1.3（2026-11-20 实测）。
+  手写的单个文件，不用构建。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --backdrop-top: #eef1f4;
+    --backdrop-bottom: #d3d9e0;
+    --ink: #171a1e;
+    --muted: #58616c;
+    --faint: #9aa2ab;
+    --sheet: #fff;
+    --rule: #dde2e7;
+    --font-ui: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    --font-num: "DIN Alternate", "DIN Condensed", "Bahnschrift", "Helvetica Neue", sans-serif;
+    /* 线的颜色，和预览里一样 */
+    --w-gnd: #3a3b3d;
+    --w-vcc: #d62828;
+    --w-scl: #d9a400;
+    --w-a: #ff8a00;
+    --w-b: #2f9e44;
+    --w-c: #1c7ed6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: linear-gradient(var(--backdrop-top), var(--backdrop-bottom)) fixed;
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-inline-size: 1100px;
+    margin-inline: auto;
+    padding: 28px 24px 64px;
+  }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header p { margin: 4px 0 0; color: var(--muted); max-inline-size: 60em; }
+
+  .sheet {
+    margin-block-start: 22px;
+    background: var(--sheet);
+    border: 1.5px solid var(--ink);
+  }
+  .sheet > h2 {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0;
+    padding: 7px 14px;
+    border-block-end: 1px solid var(--ink);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sheet > h2 small { color: var(--muted); font-size: 13px; font-weight: 400; text-align: end; }
+  .body { padding: 12px 14px 4px; }
+  .body svg { display: block; inline-size: 100%; block-size: auto; }
+  .legend { margin: 6px 0 14px; color: var(--muted); font-size: 12.5px; max-inline-size: 70em; }
+
+  table { inline-size: 100%; border-collapse: collapse; margin-block-end: 8px; }
+  th, td { padding: 6px 10px; border-block-end: 1px solid var(--rule); text-align: start; vertical-align: top; }
+  th { color: var(--muted); font-weight: 400; font-size: 12.5px; border-block-end-color: var(--ink); }
+  td.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.group td { border-block-start: 1.5px solid var(--rule); }
+  .no {
+    display: inline-grid;
+    place-items: center;
+    inline-size: 22px;
+    block-size: 22px;
+    border: 2px solid;
+    border-radius: 50%;
+    font-family: var(--font-num);
+    font-size: 13px;
+    color: var(--ink);
+  }
+
+  ol.notes { margin: 0; padding: 4px 14px 12px 36px; }
+  ol.notes li { padding-block: 5px; }
+  ol.notes strong { font-weight: 600; }
+
+  /* 图 */
+  .strip { fill: #f2f4f6; stroke: var(--ink); stroke-width: 1.5; }
+  .pcb-dark { fill: #2b2f35; stroke: var(--ink); stroke-width: 1.5; }
+  .soc { fill: #4a5058; stroke: #6b737c; }
+  .usb { fill: #cfd4d9; stroke: var(--ink); stroke-width: 1.2; }
+  .pad { fill: #fff; stroke-width: 2.4; }
+  .pad-hole { fill: #d9dde2; }
+  .pad-c3 { fill: #b9a46a; }
+  .pad-off { fill: #6b737c; }
+  .halo { fill: none; stroke: #fff; stroke-width: 7; stroke-linejoin: round; }
+  .wire { fill: none; stroke-width: 2.8; stroke-linejoin: round; }
+  .t { font-family: var(--font-ui); paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
+  .t-pad { font-size: 10px; fill: var(--ink); }
+  .t-pad.off { fill: var(--faint); }
+  .t-c3 { font-size: 11px; fill: #fff; stroke: none; font-weight: 600; }
+  .t-c3.off { fill: #8a929b; font-weight: 400; }
+  .t-title { font-size: 14px; font-weight: 600; fill: var(--ink); }
+  .t-sub { font-size: 12px; fill: var(--muted); }
+  .t-no { font-family: var(--font-num); font-size: 12px; fill: var(--ink); text-anchor: middle; }
+  .badge { fill: #fff; stroke-width: 2; }
+
+  @media (max-width: 760px) {
+    main { padding-inline: 12px; }
+    .sheet > h2 { flex-direction: column; gap: 0; }
+    .sheet > h2 small { text-align: start; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>环境光传感器接线图</h1>
+    <p>一共 12 根线。GND、3V3、SCL 三块板共用，按"主板 → A → C → B"串着走，主板每个焊盘只焊一根线；SDA 每块板各拉一根回主板；INT 不接。</p>
+  </header>
+
+  <section class="sheet" aria-labelledby="h1">
+    <h2 id="h1">怎么焊<small>传感器板只画了焊盘那头，从背面（没元件那面）看</small></h2>
+    <div class="body">
+      <svg id="fig1" viewBox="0 0 960 430" role="img" aria-label="主板和三块传感器板之间 12 根线的接法"></svg>
+      <p class="legend">每根线标了号，和下面的线号表对应。A、C 上的 GND、VCC、SCL 是"一进一出"：左边来的那根和往右去的那根，两个线头插进同一个孔、一起焊上。B 是最后一块，每个孔只有一根。为了线好画，主板画成 USB 口朝下；交叉处断开的线不相连。焊盘名字以板上丝印为准。</p>
+    </div>
+  </section>
+
+  <section class="sheet" aria-labelledby="h2">
+    <h2 id="h2">线号表<small>长度是建议剪的长度，留了装的时候把板子拉在外面的余量</small></h2>
+    <div class="body">
+      <table>
+        <thead>
+          <tr><th>号</th><th>从</th><th>到</th><th>建议长度</th></tr>
+        </thead>
+        <tbody id="wires"></tbody>
+      </table>
+      <p class="legend">多出来的线装好后盘在方块中间那块空腔里（正面那块板推进去走的通道，装完是空的），够放。主板焊盘在哪：USB 口朝上看元件面，GND、3V3、GP4、GP5 在 5V 那一排，GP6、GP7 在 GP21 那一排，都在离 USB 口远的那头。</p>
+    </div>
+  </section>
+
+  <section class="sheet" aria-labelledby="h3">
+    <h2 id="h3">焊的时候注意</h2>
+    <ol class="notes">
+      <li><strong>先焊成一整串再往方块里装。</strong>板子装进去以后里面没法下烙铁。</li>
+      <li><strong>一个孔两根线：</strong>两个线头剥 2 mm 左右，拧在一起插进同一个孔再焊。排针孔一般 ⌀1 左右，两根 30 AWG 的线插得进。</li>
+      <li><strong>线从传感器板背面插进去</strong>，正面冒出来的线头焊完剪平：板子正面离外壳只有 1.3。</li>
+      <li><strong>VCC 接 3V3，别接 5V。</strong>不确定传感器板上的上拉电阻接在稳压前还是稳压后，接 5V 有可能把 5V 送到主板引脚上。</li>
+      <li><strong>三根 SDA 接混了不会坏</strong>，固件里换一下就行；GND 和 VCC 接反会烧板子，焊前对一下丝印。</li>
+      <li>INT 空着不接。</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+'use strict';
+const NS = 'http://www.w3.org/2000/svg';
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const COLOR = { gnd: css('--w-gnd'), vcc: css('--w-vcc'), scl: css('--w-scl'), a: css('--w-a'), b: css('--w-b'), c: css('--w-c') };
+
+// 12 根线：[号, 哪根信号, 从, 到, 建议长度 mm]
+const WIRES = [
+  [1, 'a', '主板 GP5', 'A 的 SDA', 40],
+  [2, 'scl', '主板 GP4', 'A 的 SCL', 40],
+  [3, 'vcc', '主板 3V3', 'A 的 VCC', 40],
+  [4, 'gnd', '主板 GND', 'A 的 GND', 40],
+  [5, 'vcc', 'A 的 VCC', 'C 的 VCC', 45],
+  [6, 'scl', 'A 的 SCL', 'C 的 SCL', 45],
+  [7, 'gnd', 'A 的 GND', 'C 的 GND', 45],
+  [8, 'vcc', 'C 的 VCC', 'B 的 VCC', 30],
+  [9, 'scl', 'C 的 SCL', 'B 的 SCL', 30],
+  [10, 'gnd', 'C 的 GND', 'B 的 GND', 30],
+  [11, 'c', 'C 的 SDA', '主板 GP7', 50],
+  [12, 'b', 'B 的 SDA', '主板 GP6', 50],
+];
+
+function el(parent, tag, attrs = {}, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, typeof v === 'number' ? +v.toFixed(2) : v);
+  if (text != null) e.textContent = text;
+  parent.appendChild(e);
+  return e;
+}
+
+// 线号表
+function table() {
+  const tb = document.getElementById('wires');
+  for (const [no, net, from, to, len] of WIRES) {
+    const tr = document.createElement('tr');
+    if (no === 5 || no === 8 || no === 11) tr.className = 'group';
+    tr.innerHTML = `<td><span class="no" style="border-color: ${COLOR[net]}">${no}</span></td><td>${from}</td><td>${to}</td><td class="num">${len / 10} cm</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+// 比例 9 像素 = 1 毫米
+function fig1() {
+  const svg = document.getElementById('fig1');
+  const S = 9, P = 2.54 * S;
+  const gBoards = el(svg, 'g'), gWires = el(svg, 'g'), gPads = el(svg, 'g'), gTop = el(svg, 'g');
+
+  // ---- 主板：USB 口朝下画，元件面朝你 ----
+  // 这样 5V 那一排（GND、3V3、GP4、GP5）在右边、正对传感器板，GP21 那一排（GP6、GP7）在左边
+  const C3 = { left: 70, top: 120, W: 18 * S, L: 23.5 * S };
+  C3.right = C3.left + C3.W;
+  C3.bottom = C3.top + C3.L;
+  const padY = (i) => C3.bottom - (1.59 + i * 2.54) * S;     // 第 i 个焊盘（从 USB 口那头数，0 起）
+  const RIGHT = ['5V', 'GND', '3V3', 'GP0', 'GP1', 'GP2', 'GP3', 'GP4', 'GP5'];      // 画在右边的一排
+  const LEFT = ['GP21', 'GP20', 'GP19', 'GP18', 'GP10', 'GP9', 'GP8', 'GP7', 'GP6'];  // 画在左边的一排
+  const used = new Set(['GND', '3V3', 'GP4', 'GP5', 'GP6', 'GP7']);
+  const c3 = {};   // 焊盘名 → [外沿 x, y]
+  el(gBoards, 'rect', { x: C3.left, y: C3.top, width: C3.W, height: C3.L, rx: 3, class: 'pcb-dark' });
+  el(gBoards, 'rect', { x: C3.left + C3.W / 2 - 4.47 * S, y: C3.bottom - 0.5 * S, width: 8.94 * S, height: 5.5 * S, rx: 6, class: 'usb' });
+  el(gBoards, 'text', { x: C3.left + C3.W / 2, y: C3.bottom + 3.4 * S, 'text-anchor': 'middle', class: 't t-sub', stroke: 'none' }, 'USB-C');
+  el(gBoards, 'rect', { x: C3.left + C3.W / 2 - 2.5 * S, y: C3.top + 7 * S, width: 5 * S, height: 5 * S, rx: 2, class: 'soc' });
+  el(gBoards, 'text', { x: C3.left + C3.W / 2, y: C3.bottom + 8 * S, 'text-anchor': 'middle', class: 't t-title' }, '主板 ESP32-C3-Zero');
+  el(gBoards, 'text', { x: C3.left + C3.W / 2, y: C3.bottom + 8 * S + 17, 'text-anchor': 'middle', class: 't t-sub' }, '元件面朝你，USB 口画在下面');
+  for (const [side, names] of [['R', RIGHT], ['L', LEFT]]) {
+    names.forEach((name, i) => {
+      const y = padY(i), on = used.has(name);
+      const x = side === 'R' ? C3.right - 1.3 * S : C3.left;
+      el(gBoards, 'rect', { x, y: y - 0.8 * S, width: 1.3 * S, height: 1.6 * S, class: on ? 'pad-c3' : 'pad-off' });
+      el(gBoards, 'text', {
+        x: side === 'R' ? C3.right - 1.3 * S - 5 : C3.left + 1.3 * S + 5, y: y + 4,
+        'text-anchor': side === 'R' ? 'end' : 'start', class: 't-c3' + (on ? '' : ' off'),
+      }, name);
+      c3[name] = [side === 'R' ? C3.right : C3.left, y];
+    });
+  }
+
+  // ---- 传感器板：只画焊盘那头（板尾 5 mm），从背面看，芯片那头在右边（断开没画）----
+  // 背面看、芯片朝右时，焊盘从上到下是 VCC、SDA、SCL、INT、GND。让 SDA、SCL 两行和主板 GP5、GP4 对齐，这两根线就是直的
+  const ROWS = ['VCC', 'SDA', 'SCL', 'INT', 'GND'];
+  const rowY = {};
+  ROWS.forEach((n, k) => { rowY[n] = c3.GP5[1] + (k - 1) * P; });
+  const SW = 5 * S;                          // 画出来的那一截宽 5 mm
+  const sTop = rowY.GND + 2.1 * S - 14 * S;  // GND 离长边 2.1
+  const boards = [
+    { id: 'A', name: '正面', x: 380, sda: 'a' },
+    { id: 'C', name: '顶面', x: 620, sda: 'c' },
+    { id: 'B', name: '右面', x: 840, sda: 'b' },
+  ];
+  const pad = {};   // 'A.VCC' → [x, y]
+  for (const b of boards) {
+    const x0 = b.x, x1 = b.x + SW, y0 = sTop, y1 = sTop + 14 * S;
+    // 右边是折断线：板子其余部分没画
+    const zig = [];
+    for (let k = 0; k <= 14; k++) zig.push(`${x1 + (k % 2 ? 3 : -3)},${y0 + (y1 - y0) * k / 14}`);
+    el(gBoards, 'path', { d: `M${x1 - 3},${y0} H${x0} V${y1} H${x1 - 3} L${zig.reverse().join(' L')} Z`, class: 'strip' });
+    el(gBoards, 'text', { x: x0, y: y1 + 20, class: 't t-title' }, `${b.id}  ${b.name}`);
+    el(gBoards, 'text', { x: x0, y: y1 + 37, class: 't t-sub' }, '芯片在右边那头');
+    const px = x0 + 1.3 * S;
+    for (const n of ROWS) {
+      pad[`${b.id}.${n}`] = [px, rowY[n]];
+      const color = { VCC: COLOR.vcc, SDA: COLOR[b.sda], SCL: COLOR.scl, GND: COLOR.gnd }[n];
+      el(gPads, 'circle', { cx: px, cy: rowY[n], r: 0.85 * S, class: 'pad', stroke: color || '#c3c9d0' });
+      el(gPads, 'circle', { cx: px, cy: rowY[n], r: 0.4 * S, class: 'pad-hole' });
+      el(gPads, 'text', { x: px + 10, y: rowY[n] - 5, class: 't t-pad' + (color ? '' : ' off') }, n === 'INT' ? 'INT 不接' : n);
+    }
+  }
+
+  // ---- 线 ----
+  const wire = (d, net) => {
+    el(gWires, 'path', { d, class: 'halo' });
+    el(gWires, 'path', { d, class: 'wire', stroke: COLOR[net] });
+  };
+  const badge = (no, net, x, y) => {
+    el(gTop, 'circle', { cx: x, cy: y, r: 9, class: 'badge', stroke: COLOR[net] });
+    el(gTop, 'text', { x, y: y + 4.2, class: 't-no' }, no);
+  };
+  const A = (n) => pad[`A.${n}`], B = (n) => pad[`B.${n}`], C = (n) => pad[`C.${n}`];
+  const midA = (C3.right + 300) / 2;
+
+  // 1、2：GP5、GP4 平着过去
+  wire(`M${c3.GP5[0]},${c3.GP5[1]} H${A('SDA')[0]}`, 'a');
+  wire(`M${c3.GP4[0]},${c3.GP4[1]} H${A('SCL')[0]}`, 'scl');
+  // 3：3V3 往上绕到 A 的 VCC（跨过 1、2）；4：GND 往上到 A 的 GND
+  wire(`M${c3['3V3'][0]},${c3['3V3'][1]} H300 V${A('VCC')[1]} H${A('VCC')[0]}`, 'vcc');
+  wire(`M${c3.GND[0]},${c3.GND[1]} H325 V${A('GND')[1]} H${A('GND')[0]}`, 'gnd');
+  // 5～10：A → C → B 一排一排平着过去
+  for (const [from, to] of [[A, C], [C, B]]) {
+    wire(`M${from('VCC')[0]},${from('VCC')[1]} H${to('VCC')[0]}`, 'vcc');
+    wire(`M${from('SCL')[0]},${from('SCL')[1]} H${to('SCL')[0]}`, 'scl');
+    wire(`M${from('GND')[0]},${from('GND')[1]} H${to('GND')[0]}`, 'gnd');
+  }
+  // 11：C 的 SDA 从上面绕回主板左边的 GP7；12：B 的 SDA 绕回 GP6
+  const yC = 72, yB = 52;
+  wire(`M${C('SDA')[0]},${C('SDA')[1]} H${C('SDA')[0] - 34} V${yC} H40 V${c3.GP7[1]} H${c3.GP7[0]}`, 'c');
+  wire(`M${B('SDA')[0]},${B('SDA')[1]} H${B('SDA')[0] - 34} V${yB} H24 V${c3.GP6[1]} H${c3.GP6[0]}`, 'b');
+
+  // 线号
+  badge(1, 'a', midA - 18, c3.GP5[1]);
+  badge(2, 'scl', midA - 18, c3.GP4[1]);
+  badge(3, 'vcc', 340, A('VCC')[1]);
+  badge(4, 'gnd', 352, A('GND')[1]);
+  const midAC = (A('VCC')[0] + SW + C('VCC')[0] - 34) / 2;
+  const midCB = (C('VCC')[0] + SW + B('VCC')[0] - 34) / 2;
+  badge(5, 'vcc', midAC, A('VCC')[1]);
+  badge(6, 'scl', midAC, A('SCL')[1]);
+  badge(7, 'gnd', midAC, A('GND')[1]);
+  badge(8, 'vcc', midCB, C('VCC')[1]);
+  badge(9, 'scl', midCB, C('SCL')[1]);
+  badge(10, 'gnd', midCB, C('GND')[1]);
+  badge(11, 'c', 330, yC);
+  badge(12, 'b', 520, yB);
+}
+
+table();
+fig1();
+</script>
+</body>
+</html>
